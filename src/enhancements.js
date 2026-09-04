@@ -11,33 +11,62 @@ function showToast(message, duration = 3000) {
   }, duration);
 }
 function logData(){
-  return `<div class="card" style="max-width:650px"><p class="eyebrow">FIELD DATA ENTRY</p><h2>Log field data</h2><p>Add ground data for a new area. It appears in the dashboard immediately.</p>
+  const e = state.editing;
+  return `<div class="card" style="max-width:650px"><p class="eyebrow">FIELD DATA ENTRY</p><h2>${e?tr('Edit area','علاقہ میں ترمیم کریں'):tr('Log field data','فیلڈ ڈیٹا درج کریں')}</h2><p>${e?tr('Update ground data for this area.','اس علاقے کا ڈیٹا اپ ڈیٹ کریں۔'):tr('Add ground data for a new area. It appears in the dashboard immediately.','نئے علاقے کا زمینی ڈیٹا شامل کریں۔')}</p>
   <form onsubmit="handleLogData(event)" style="display:grid;gap:14px;margin-top:16px">
-  <label>Area name<input id="fd-village" required placeholder="e.g. Bahrain"></label>
-  <label>District<input id="fd-district" required placeholder="e.g. Swat"></label>
-  <label>Tehsil<input id="fd-tehsil" placeholder="e.g. Bahrain"></label>
-  <label>Population<input id="fd-population" type="number" placeholder="e.g. 3200"></label>
-  <label>Distance to nearest facility (km)<input id="fd-distance" type="number" step="0.1" placeholder="e.g. 28"></label>
-  <label>Flood risk<select id="fd-flood"><option>Unknown</option><option>Low</option><option>Medium</option><option>Medium-High</option><option>High</option></select></label>
-  <label>Accessibility<select id="fd-access"><option>Unknown</option><option>Good</option><option>Moderate</option><option>Difficult</option><option>Poor</option></select></label>
-  <label><input id="fd-bhu" type="checkbox"> BHU present on site</label>
+  <label>${tr('Area name','علاقے کا نام')}<input id="fd-village" required placeholder="e.g. Bahrain" value="${e?esc(e.village):''}"></label>
+  <label>${tr('District','ضلع')}<input id="fd-district" required placeholder="e.g. Swat" value="${e?esc(e.district):''}"></label>
+  <label>${tr('Tehsil','تحصیل')}<input id="fd-tehsil" placeholder="e.g. Bahrain" value="${e?esc(e.tehsil):''}"></label>
+  <label>${tr('Population','آبادی')}<input id="fd-population" type="number" placeholder="e.g. 3200" value="${e&&e.populationVerified?e.population:''}"></label>
+  <label>${tr('Distance to nearest facility (km)','فاصلہ (کلومیٹر)')}<input id="fd-distance" type="number" step="0.1" placeholder="e.g. 28" value="${e&&typeof e.distance_km==='number'?e.distance_km:''}"></label>
+  <label>${tr('Flood risk','سیلاب کا خطرہ')}<select id="fd-flood">${['Unknown','Low','Medium','Medium-High','High'].map(o=>`<option ${e&&e.flood_risk===o?'selected':''}>${o}</option>`).join('')}</select></label>
+  <label>${tr('Accessibility','رسائی')}<select id="fd-access">${['Unknown','Good','Moderate','Difficult','Poor'].map(o=>`<option ${e&&e.accessibility===o?'selected':''}>${o}</option>`).join('')}</select></label>
+  <label><input id="fd-bhu" type="checkbox" ${e&&e.has_bhu_on_site?'checked':''}> ${tr('BHU present on site','بی ایچ یو موجود ہے')}</label>
   <div id="fd-error" class="login-error"></div>
-  <button class="primary" type="submit">Add area</button>
+  <div style="display:flex;gap:10px">
+  <button class="primary" type="submit">${e?tr('Save changes','محفوظ کریں'):tr('Add area','علاقہ شامل کریں')}</button>
+  ${e?`<button class="outline" type="button" onclick="cancelEdit()">${tr('Cancel','منسوخ کریں')}</button>`:''}
+  </div>
   </form></div>`;
 }
+function cancelEdit(){state.editing=null;go('rankings')}
 async function handleLogData(event){
   event.preventDefault();
   const err=$('#fd-error'); err.textContent='';
   const body={village:$('#fd-village').value.trim(),district:$('#fd-district').value.trim(),tehsil:$('#fd-tehsil').value.trim(),population:$('#fd-population').value,distance_km:$('#fd-distance').value,flood_risk:$('#fd-flood').value,accessibility:$('#fd-access').value,has_bhu_on_site:$('#fd-bhu').checked};
+  const editing = state.editing;
   try{
-    const res=await fetch('/api/villages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const url = editing ? `/api/villages/${encodeURIComponent(editing.id)}` : '/api/villages';
+    const method = editing ? 'PUT' : 'POST';
+    const res=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const data=await res.json();
-    if(!res.ok){err.textContent=data.error||'Could not add area';return}
-    showToast('Area added successfully');
+    if(!res.ok){err.textContent=data.error||'Could not save area';return}
+    showToast(editing?tr('Area updated successfully','علاقہ اپ ڈیٹ ہو گیا'):tr('Area added successfully','علاقہ شامل ہو گیا'));
+    state.editing=null;
     await loadData();
     go('rankings');
   }catch(e){err.textContent='Network error. Please try again.'}
 }
+function editVillage(key){
+  const v = state.data.find(x=>x.rowKey===key);
+  if(!v) return;
+  state.editing = v;
+  go('logdata');
+}
+async function deleteVillage(key){
+  const v = state.data.find(x=>x.rowKey===key);
+  if(!v) return;
+  if(!confirm(`Delete ${v.village}? This cannot be undone.`)) return;
+  try{
+    const res=await fetch(`/api/villages/${encodeURIComponent(v.id)}`,{method:'DELETE'});
+    const data=await res.json();
+    if(!res.ok){showToast(data.error||'Could not delete area');return}
+    showToast(tr('Area deleted','علاقہ حذف ہو گیا'));
+    await loadData();
+    render();
+  }catch(e){showToast('Network error. Please try again.')}
+}
+function rankings(){let rows=[...list()].sort((a,b)=>{let x=a[state.sort.key],y=b[state.sort.key];if(x===null)x=-1;if(y===null)y=-1;return (typeof x==='number'?x-y:String(x).localeCompare(String(y)))*state.sort.dir});const cols=[['village','Location'],['id','ID'],['tehsil','Tehsil'],['district','District'],['score','Score'],['priority','Priority'],['confidence','Confidence'],['distance_km','Distance'],['population','Population']];return `${filters()}<div class="card"><div class="card-head"><div><h3>${tr('Ranked locations','درجہ بند مقامات')}</h3><p>${tr('Sortable results update with your filters.','فلٹر کے مطابق ترتیب شدہ نتائج۔')}</p></div><button class="primary" onclick="exportCsv()">${tr('Export CSV','CSV برآمد کریں')}</button></div><div class="table-wrap"><table class="table"><thead><tr><th>#</th>${cols.map(([k,l])=>`<th><button class="sort" onclick="sortBy('${k}')">${l}${state.sort.key===k?(state.sort.dir===1?' ↑':' ↓'):''}</button></th>`).join('')}<th></th></tr></thead><tbody>${rows.map((v,i)=>`<tr><td>${i+1}</td><td><b>${esc(v.village)}</b></td><td>${esc(v.id)}</td><td>${esc(v.tehsil)}</td><td>${esc(v.district)}</td><td><b>${v.score??'—'}</b></td><td>${badge(v.priority)}</td><td>${v.confidence} (${v.confidencePct}%)</td><td>${typeof v.distance_km==='number'?v.distance_km+' km':'Not Available'}</td><td>${v.populationVerified?v.population.toLocaleString():'Not Available'}</td><td style="white-space:nowrap"><button class="link" onclick="select('${v.rowKey}')">${tr('Details','تفصیل')} →</button> <button class="link" onclick="editVillage('${v.rowKey}')">${tr('Edit','ترمیم')}</button> <button class="link" style="color:#c83f34" onclick="deleteVillage('${v.rowKey}')">${tr('Delete','حذف کریں')}</button></td></tr>`).join('')||`<tr><td colspan="11" class="empty">${tr('No locations match these filters.','کوئی مقام فلٹر سے مطابقت نہیں رکھتا۔')}</td></tr>`}</tbody></table></div></div>`}
 state.auth=false;state.filters.flood='All';
 function qualityReport(){const d=state.data;return{duplicateIds:d.filter((v,i)=>d.some((x,j)=>j<i&&x.id===v.id)).length,missingCoords:d.filter(v=>typeof v.latitude!=='number'||typeof v.longitude!=='number').length,missingPop:d.filter(v=>!v.populationVerified).length,unknownFlood:d.filter(v=>v.flood_risk==='Unknown').length,unknownAccess:d.filter(v=>v.accessibility==='Unknown').length,missingDistance:d.filter(v=>typeof v.distance_km!=='number').length,adminPopulation:d.filter(v=>v.id==='RJ-09').length}}
 function list(){return state.data.filter(v=>(state.filters.district==='All'||v.district===state.filters.district)&&(state.filters.tehsil==='All'||v.tehsil===state.filters.tehsil)&&(state.filters.priority==='All'||v.priority===state.filters.priority)&&(state.filters.confidence==='All'||v.confidence===state.filters.confidence)&&(state.filters.flood==='All'||v.flood_risk===state.filters.flood)&&(!state.filters.search||v.village.toLowerCase().includes(state.filters.search.toLowerCase())))}

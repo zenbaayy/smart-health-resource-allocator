@@ -107,7 +107,7 @@ async function handler(req, res) {
 
   const cookies = parseCookies(req);
   const session = auth.verifySession(cookies.session);
-  if (!session && (pathname === '/api/data' || pathname === '/api/chat' || pathname === '/api/villages')) {
+  if (!session && (pathname === '/api/data' || pathname === '/api/chat' || pathname.startsWith('/api/villages'))) {
     return json(res, 401, { error: 'Authentication required' });
   }
 
@@ -134,7 +134,39 @@ async function handler(req, res) {
     try { fs.writeFileSync(path.join(PUBLIC, 'data', 'villages.json'), JSON.stringify(villages, null, 2)); } catch (e) {}
     return json(res, 201, { message: 'Area added successfully' });
   }
+  if (req.method === 'PUT' && pathname.startsWith('/api/villages/')) {
+    const id = decodeURIComponent(pathname.slice('/api/villages/'.length));
+    const idx = villages.findIndex(v => v.id === id);
+    if (idx === -1) return json(res, 404, { error: 'Area not found' });
+    const raw = await readBody(req);
+    let body;
+    try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Invalid request.' }); }
+    if (!body.village || !body.district) return json(res, 400, { error: 'Area name and district are required.' });
+    villages[idx] = {
+      ...villages[idx],
+      village: body.village,
+      district: body.district,
+      tehsil: body.tehsil || body.district,
+      population: body.population !== '' && body.population !== undefined ? Number(body.population) : undefined,
+      distance_km: body.distance_km !== '' && body.distance_km !== undefined ? Number(body.distance_km) : undefined,
+      flood_risk: body.flood_risk || 'Unknown',
+      has_bhu_on_site: !!body.has_bhu_on_site,
+      accessibility: body.accessibility || 'Unknown'
+    };
+    rebuild();
+    try { fs.writeFileSync(path.join(PUBLIC, 'data', 'villages.json'), JSON.stringify(villages, null, 2)); } catch (e) {}
+    return json(res, 200, { message: 'Area updated successfully' });
+  }
 
+  if (req.method === 'DELETE' && pathname.startsWith('/api/villages/')) {
+    const id = decodeURIComponent(pathname.slice('/api/villages/'.length));
+    const idx = villages.findIndex(v => v.id === id);
+    if (idx === -1) return json(res, 404, { error: 'Area not found' });
+    villages.splice(idx, 1);
+    rebuild();
+    try { fs.writeFileSync(path.join(PUBLIC, 'data', 'villages.json'), JSON.stringify(villages, null, 2)); } catch (e) {}
+    return json(res, 200, { message: 'Area deleted' });
+  }
   if (req.method === 'POST' && pathname === '/api/chat') {
     const raw = await readBody(req);
     let question; try { question = JSON.parse(raw).question; } catch { return json(res, 400, { error: 'Invalid request.' }); }

@@ -7,7 +7,7 @@ const auth = require('./database');
 
 const ROOT = path.resolve(__dirname, '..');
 const PUBLIC = path.join(ROOT, 'src');
-const villages = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'data', 'villages.json'), 'utf8'));
+let villages = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'data', 'villages.json'), 'utf8'));
 if (fs.existsSync(path.join(ROOT, '.env'))) {
   for (const line of fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split(/\r?\n/)) {
     const hit = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
@@ -30,8 +30,14 @@ function scored(v, i) {
   const level = score === null ? 'Survey Required' : score >= 80 ? 'Critical' : score >= 60 ? 'High' : score >= 40 ? 'Medium' : 'Low';
   return { ...v, rowKey: `${v.id}-${i}`, score, confidence, confidencePct: available, priority: level, populationVerified };
 }
-const dataset = villages.map(scored);
-const context = dataset.map(v => ({ location: v.village, id: v.id, district: v.district, tehsil: v.tehsil, priorityScore: v.score, priorityLevel: v.priority, confidence: `${v.confidence} (${v.confidencePct}%)`, floodRisk: v.flood_risk, distanceKm: v.distance_km ?? 'Not Available', bhuOnSite: v.has_bhu_on_site, accessibility: v.accessibility, verifiedPopulation: v.populationVerified ? v.population : 'Not Available' }));
+let dataset = villages.map(scored);
+let context = dataset.map(v => ({ location: v.village, id: v.id, district: v.district, tehsil: v.tehsil, priorityScore: v.score, priorityLevel: v.priority, confidence: `${v.confidence} (${v.confidencePct}%)`, floodRisk: v.flood_risk, distanceKm: v.distance_km ?? 'Not Available', bhuOnSite: v.has_bhu_on_site, accessibility: v.accessibility, verifiedPopulation: v.populationVerified ? v.population : 'Not Available' }));
+
+function rebuild() {
+  dataset = villages.map(scored);
+  context = dataset.map(v => ({ location: v.village, id: v.id, district: v.district, tehsil: v.tehsil, priorityScore: v.score, priorityLevel: v.priority, confidence: `${v.confidence} (${v.confidencePct}%)`, floodRisk: v.flood_risk, distanceKm: v.distance_km ?? 'Not Available', bhuOnSite: v.has_bhu_on_site, accessibility: v.accessibility, verifiedPopulation: v.populationVerified ? v.population : 'Not Available' }));
+}
+
 function json(res, code, body) { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); }
 function parseCookies(req) {
   const cookie = req.headers.cookie || '';
@@ -101,11 +107,34 @@ async function handler(req, res) {
 
   const cookies = parseCookies(req);
   const session = auth.verifySession(cookies.session);
-  if (!session && (pathname === '/api/data' || pathname === '/api/chat')) {
+  if (!session && (pathname === '/api/data' || pathname === '/api/chat' || pathname === '/api/villages')) {
     return json(res, 401, { error: 'Authentication required' });
   }
 
   if (req.method === 'GET' && pathname.startsWith('/api/data')) return json(res, 200, dataset);
+
+  if (req.method === 'POST' && pathname === '/api/villages') {
+    const raw = await readBody(req);
+    let body;
+    try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Invalid request.' }); }
+    if (!body.village || !body.district) return json(res, 400, { error: 'Area name and district are required.' });
+    const newVillage = {
+      id: `FIELD-${Date.now()}`,
+      village: body.village,
+      district: body.district,
+      tehsil: body.tehsil || body.district,
+      population: body.population !== '' && body.population !== undefined ? Number(body.population) : undefined,
+      distance_km: body.distance_km !== '' && body.distance_km !== undefined ? Number(body.distance_km) : undefined,
+      flood_risk: body.flood_risk || 'Unknown',
+      has_bhu_on_site: !!body.has_bhu_on_site,
+      accessibility: body.accessibility || 'Unknown'
+    };
+    villages.push(newVillage);
+    rebuild();
+    try { fs.writeFileSync(path.join(PUBLIC, 'data', 'villages.json'), JSON.stringify(villages, null, 2)); } catch (e) {}
+    return json(res, 201, { message: 'Area added successfully' });
+  }
+
   if (req.method === 'POST' && pathname === '/api/chat') {
     const raw = await readBody(req);
     let question; try { question = JSON.parse(raw).question; } catch { return json(res, 400, { error: 'Invalid request.' }); }

@@ -3,7 +3,7 @@ const { DatabaseSync } = require('node:sqlite');
 const crypto = require('crypto');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, '..', 'users.db');
+const DB_PATH = process.env.VERCEL ? '/tmp/users.db' : path.join(__dirname, '..', 'users.db');
 const db = new DatabaseSync(DB_PATH);
 
 db.exec(`

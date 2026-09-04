@@ -27,7 +27,13 @@ function logData(){
   <button class="primary" type="submit">${e?tr('Save changes','محفوظ کریں'):tr('Add area','علاقہ شامل کریں')}</button>
   ${e?`<button class="outline" type="button" onclick="cancelEdit()">${tr('Cancel','منسوخ کریں')}</button>`:''}
   </div>
-  </form></div>`;
+  </form></div>
+  ${e?'':`<div class="card" style="max-width:650px;margin-top:18px"><p class="eyebrow">${tr('BULK IMPORT','بلک درآمد')}</p><h2>${tr('Upload data file','ڈیٹا فائل اپ لوڈ کریں')}</h2><p>${tr('Upload a CSV or Excel file with multiple areas at once. They will be added to the same dataset used across the dashboard.','ایک ساتھ کئی علاقے شامل کرنے کے لیے CSV یا Excel فائل اپ لوڈ کریں۔')}</p>
+  <p style="font-size:12px;color:var(--muted);line-height:1.7"><b>${tr('Expected columns:','متوقع کالم:')}</b><br>Area Name, District, Tehsil, Population, Distance to Nearest Facility (km), Flood Risk, Accessibility, BHU Present on Site</p>
+  <button class="outline" type="button" onclick="downloadTemplate()">${tr('Download template','نمونہ ڈاؤن لوڈ کریں')}</button>
+  <div style="margin-top:14px"><input type="file" id="bulk-file" accept=".csv,.xlsx,.xls" onchange="handleBulkUpload(event)"></div>
+  <div id="bulk-status" style="margin-top:14px"></div>
+  </div>`}`;
 }
 function cancelEdit(){state.editing=null;go('rankings')}
 async function handleLogData(event){
@@ -65,6 +71,106 @@ async function deleteVillage(key){
     await loadData();
     render();
   }catch(e){showToast('Network error. Please try again.')}
+}
+function downloadTemplate(){
+  const headers=['Area Name','District','Tehsil','Population','Distance to Nearest Facility (km)','Flood Risk','Accessibility','BHU Present on Site'];
+  const sample=['Bahrain','Swat','Bahrain','3200','28','Medium','Difficult','No'];
+  const csv=[headers,sample].map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'}),a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);a.download='field-data-template.csv';a.click();URL.revokeObjectURL(a.href);
+}
+function parseCSVText(text){
+  const rows=[];let row=[],field='',inQuotes=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(inQuotes){
+      if(c==='"'){ if(text[i+1]==='"'){field+='"';i++;} else inQuotes=false; }
+      else field+=c;
+    } else {
+      if(c==='"') inQuotes=true;
+      else if(c===','){row.push(field);field='';}
+      else if(c==='\n'){row.push(field);rows.push(row);row=[];field='';}
+      else if(c==='\r'){}
+      else field+=c;
+    }
+  }
+  if(field.length||row.length){row.push(field);rows.push(row);}
+  return rows.filter(r=>r.some(x=>x.trim()!==''));
+}
+function normalizeRows(rawRows){
+  if(!rawRows.length) return [];
+  const headers=rawRows[0].map(h=>String(h).trim().toLowerCase());
+  const idx={
+    village: headers.findIndex(h=>h.includes('area')||h.includes('village')),
+    district: headers.findIndex(h=>h.includes('district')),
+    tehsil: headers.findIndex(h=>h.includes('tehsil')),
+    population: headers.findIndex(h=>h.includes('population')),
+    distance: headers.findIndex(h=>h.includes('distance')),
+    flood: headers.findIndex(h=>h.includes('flood')),
+    access: headers.findIndex(h=>h.includes('access')),
+    bhu: headers.findIndex(h=>h.includes('bhu'))
+  };
+  const toBool=v=>{const s=String(v).trim().toLowerCase();return s==='yes'||s==='true'||s==='1';};
+  const asNum=v=>{const s=String(v).trim();if(s==='')return '';const n=Number(s);return isNaN(n)?null:n;};
+  return rawRows.slice(1).map(r=>{
+    const pop=idx.population>-1?asNum(r[idx.population]):'';
+    const dist=idx.distance>-1?asNum(r[idx.distance]):'';
+    return {
+      village: idx.village>-1?String(r[idx.village]||'').trim():'',
+      district: idx.district>-1?String(r[idx.district]||'').trim():'',
+      tehsil: idx.tehsil>-1?String(r[idx.tehsil]||'').trim():'',
+      population: pop===null?'__invalid__':pop,
+      distance_km: dist===null?'__invalid__':dist,
+      flood_risk: idx.flood>-1?String(r[idx.flood]||'').trim():'',
+      accessibility: idx.access>-1?String(r[idx.access]||'').trim():'',
+      has_bhu_on_site: idx.bhu>-1?toBool(r[idx.bhu]):false
+    };
+  });
+}
+async function handleBulkUpload(event){
+  const file=event.target.files[0];
+  if(!file) return;
+  const statusEl=$('#bulk-status');
+  statusEl.innerHTML=`<p style="color:var(--muted)">${tr('Reading file…','فائل پڑھی جا رہی ہے…')}</p>`;
+  try{
+    let rawRows;
+    if(file.name.toLowerCase().endsWith('.csv')){
+      const text=await file.text();
+      rawRows=parseCSVText(text);
+    } else {
+      if(!window.XLSX){statusEl.innerHTML=`<p class="login-error">${tr('Excel support failed to load. Please use a CSV file.','ایکسل سپورٹ لوڈ نہیں ہوا۔ براہ کرم CSV فائل استعمال کریں۔')}</p>`;return;}
+      const buf=await file.arrayBuffer();
+      const wb=XLSX.read(buf,{type:'array'});
+      const sheet=wb.Sheets[wb.SheetNames[0]];
+      rawRows=XLSX.utils.sheet_to_json(sheet,{header:1,raw:false,defval:''});
+    }
+    const rows=normalizeRows(rawRows);
+    const preErrors=[];
+    const validRows=[];
+    rows.forEach((r,i)=>{
+      const rowNum=i+2;
+      if(!r.village||!r.district){preErrors.push(`Row ${rowNum}: Area name and district are required — skipped locally.`);return;}
+      if(r.population==='__invalid__'){preErrors.push(`Row ${rowNum}: Population is not a valid number — sent as empty.`);r.population='';}
+      if(r.distance_km==='__invalid__'){preErrors.push(`Row ${rowNum}: Distance is not a valid number — sent as empty.`);r.distance_km='';}
+      validRows.push(r);
+    });
+    if(!validRows.length){
+      statusEl.innerHTML=`<p class="login-error">${tr('No valid rows found in the file.','فائل میں کوئی درست قطار نہیں ملی۔')}</p>`;
+      return;
+    }
+    const res=await fetch('/api/villages/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:validRows})});
+    const data=await res.json();
+    if(!res.ok){statusEl.innerHTML=`<p class="login-error">${data.error||'Upload failed'}</p>`;return;}
+    const allErrors=[...preErrors,...(data.errors||[])];
+    statusEl.innerHTML=`<div class="notice"><b>${tr('Upload complete','اپ لوڈ مکمل')}</b><br>
+      ${tr('Total rows','کل قطاریں')}: ${data.totalRows} · ${tr('Imported','درآمد شدہ')}: ${data.imported} · ${tr('Skipped (duplicates)','چھوڑی گئیں')}: ${data.skipped} · ${tr('Rejected','مسترد')}: ${data.rejected}
+      ${allErrors.length?`<details style="margin-top:8px"><summary>${tr('View details','تفصیلات دیکھیں')} (${allErrors.length})</summary><ul style="margin:8px 0 0;padding-left:18px">${allErrors.map(e=>`<li>${esc(e)}</li>`).join('')}</ul></details>`:''}
+    </div>`;
+    if(data.imported>0){ showToast(tr(`${data.imported} area(s) imported successfully`,`${data.imported} علاقے درآمد ہو گئے`)); await loadData(); }
+    event.target.value='';
+  }catch(e){
+    statusEl.innerHTML=`<p class="login-error">${tr('Could not read the file. Please check the format and try again.','فائل نہیں پڑھی جا سکی۔')}</p>`;
+  }
 }
 function rankings(){let rows=[...list()].sort((a,b)=>{let x=a[state.sort.key],y=b[state.sort.key];if(x===null)x=-1;if(y===null)y=-1;return (typeof x==='number'?x-y:String(x).localeCompare(String(y)))*state.sort.dir});const cols=[['village','Location'],['id','ID'],['tehsil','Tehsil'],['district','District'],['score','Score'],['priority','Priority'],['confidence','Confidence'],['distance_km','Distance'],['population','Population']];return `${filters()}<div class="card"><div class="card-head"><div><h3>${tr('Ranked locations','درجہ بند مقامات')}</h3><p>${tr('Sortable results update with your filters.','فلٹر کے مطابق ترتیب شدہ نتائج۔')}</p></div><button class="primary" onclick="exportCsv()">${tr('Export CSV','CSV برآمد کریں')}</button></div><div class="table-wrap"><table class="table"><thead><tr><th>#</th>${cols.map(([k,l])=>`<th><button class="sort" onclick="sortBy('${k}')">${l}${state.sort.key===k?(state.sort.dir===1?' ↑':' ↓'):''}</button></th>`).join('')}<th></th></tr></thead><tbody>${rows.map((v,i)=>`<tr><td>${i+1}</td><td><b>${esc(v.village)}</b></td><td>${esc(v.id)}</td><td>${esc(v.tehsil)}</td><td>${esc(v.district)}</td><td><b>${v.score??'—'}</b></td><td>${badge(v.priority)}</td><td>${v.confidence} (${v.confidencePct}%)</td><td>${typeof v.distance_km==='number'?v.distance_km+' km':'Not Available'}</td><td>${v.populationVerified?v.population.toLocaleString():'Not Available'}</td><td style="white-space:nowrap"><button class="link" onclick="select('${v.rowKey}')">${tr('Details','تفصیل')} →</button> <button class="link" onclick="editVillage('${v.rowKey}')">${tr('Edit','ترمیم')}</button> <button class="link" style="color:#c83f34" onclick="deleteVillage('${v.rowKey}')">${tr('Delete','حذف کریں')}</button></td></tr>`).join('')||`<tr><td colspan="11" class="empty">${tr('No locations match these filters.','کوئی مقام فلٹر سے مطابقت نہیں رکھتا۔')}</td></tr>`}</tbody></table></div></div>`}
 state.auth=false;state.filters.flood='All';

@@ -167,6 +167,45 @@ async function handler(req, res) {
     try { fs.writeFileSync(path.join(PUBLIC, 'data', 'villages.json'), JSON.stringify(villages, null, 2)); } catch (e) {}
     return json(res, 200, { message: 'Area deleted' });
   }
+    if (req.method === 'POST' && pathname === '/api/villages/bulk') {
+    const raw = await readBody(req);
+    let body;
+    try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Invalid request.' }); }
+    if (!Array.isArray(body.rows)) return json(res, 400, { error: 'Expected a rows array.' });
+
+    const existingKeys = new Set(villages.map(v => `${(v.village||'').trim().toLowerCase()}|${(v.district||'').trim().toLowerCase()}`));
+    let imported = 0, skipped = 0, rejected = 0;
+    const errors = [];
+
+    for (let i = 0; i < body.rows.length; i++) {
+      const r = body.rows[i];
+      const rowNum = i + 2; // account for header row
+      if (!r.village || !r.district) { rejected++; errors.push(`Row ${rowNum}: Area name and district are required.`); continue; }
+      const key = `${r.village.trim().toLowerCase()}|${r.district.trim().toLowerCase()}`;
+      if (existingKeys.has(key)) { skipped++; errors.push(`Row ${rowNum}: "${r.village}" in "${r.district}" already exists — skipped.`); continue; }
+
+      const newVillage = {
+        id: `FIELD-${Date.now()}-${i}`,
+        village: r.village.trim(),
+        district: r.district.trim(),
+        tehsil: (r.tehsil || r.district).trim(),
+        population: r.population !== '' && r.population !== undefined && r.population !== null ? Number(r.population) : undefined,
+        distance_km: r.distance_km !== '' && r.distance_km !== undefined && r.distance_km !== null ? Number(r.distance_km) : undefined,
+        flood_risk: ['High','Medium-High','Medium','Low'].includes(r.flood_risk) ? r.flood_risk : 'Unknown',
+        has_bhu_on_site: !!r.has_bhu_on_site,
+        accessibility: ['Good','Moderate','Difficult','Poor'].includes(r.accessibility) ? r.accessibility : 'Unknown'
+      };
+      villages.push(newVillage);
+      existingKeys.add(key);
+      imported++;
+    }
+
+    if (imported > 0) {
+      rebuild();
+      try { fs.writeFileSync(path.join(PUBLIC, 'data', 'villages.json'), JSON.stringify(villages, null, 2)); } catch (e) {}
+    }
+    return json(res, 200, { totalRows: body.rows.length, imported, skipped, rejected, errors });
+  }
   if (req.method === 'POST' && pathname === '/api/chat') {
     const raw = await readBody(req);
     let question; try { question = JSON.parse(raw).question; } catch { return json(res, 400, { error: 'Invalid request.' }); }

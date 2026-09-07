@@ -37,7 +37,16 @@ function rebuild() {
   dataset = villages.map(scored);
   context = dataset.map(v => ({ location: v.village, id: v.id, district: v.district, tehsil: v.tehsil, priorityScore: v.score, priorityLevel: v.priority, confidence: `${v.confidence} (${v.confidencePct}%)`, floodRisk: v.flood_risk, distanceKm: v.distance_km ?? 'Not Available', bhuOnSite: v.has_bhu_on_site, accessibility: v.accessibility, verifiedPopulation: v.populationVerified ? v.population : 'Not Available' }));
 }
-
+const maternalContext = {
+  source: 'Pakistan Maternal Mortality Survey (PMMS) 2019 & PDHS 2017-18',
+  indicators: [
+    { label: 'Punjab maternal mortality ratio', value: '157 per 100,000 live births' },
+    { label: 'Punjab ANC coverage (4+ visits)', value: '49.7%' },
+    { label: 'Punjab skilled birth attendance', value: '38.5%' },
+    { label: 'Pakistan under-5 mortality rate (national)', value: '74 per 1,000 live births' }
+  ],
+  note: 'Village-level maternal outcome data is not publicly available. These district/provincial figures provide regional context for why access-risk factors (distance, flood disruption, facility absence) are used as proxies for maternal and child health risk in the scoring model below.'
+};
 function json(res, code, body) { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); }
 function parseCookies(req) {
   const cookie = req.headers.cookie || '';
@@ -110,7 +119,7 @@ async function handler(req, res) {
   if (!session && (pathname === '/api/data' || pathname === '/api/chat' || pathname.startsWith('/api/villages'))) {
     return json(res, 401, { error: 'Authentication required' });
   }
-
+if (req.method === 'GET' && pathname === '/api/maternal-context') return json(res, 200, maternalContext);
   if (req.method === 'GET' && pathname.startsWith('/api/data')) return json(res, 200, dataset);
 
   if (req.method === 'POST' && pathname === '/api/villages') {

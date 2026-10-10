@@ -109,6 +109,20 @@ async function handler(req, res) {
     return res.end(JSON.stringify({ message: 'Logged out' }));
   }
 
+  if (req.method === 'POST' && pathname === '/api/inquiries') {
+    const raw = await readBody(req);
+    let b; try { b = JSON.parse(raw); } catch { return json(res, 400, { error: 'Invalid request.' }); }
+    if (b.hp) return json(res, 201, { message: 'Thank you! We received your request.', ref: 'SH-OK' });
+    if (!['ngo','field','volunteer','general'].includes(b.type) || !b.fields || typeof b.fields !== 'object') return json(res, 400, { error: 'Invalid form.' });
+    const clean = {};
+    for (const [k, v] of Object.entries(b.fields).slice(0, 12)) clean[String(k).slice(0, 40)] = String(v == null ? '' : v).slice(0, 1000);
+    if (!clean.name || !clean.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean.email)) return json(res, 400, { error: 'Name and a valid email are required.' });
+    const entry = { ref: 'SH-' + Date.now().toString(36).toUpperCase(), type: b.type, fields: clean, at: new Date().toISOString() };
+    console.log('INQUIRY', JSON.stringify(entry));
+    try { fs.appendFileSync(path.join(require('os').tmpdir(), 'inquiries.jsonl'), JSON.stringify(entry) + '\n'); } catch (e) {}
+    return json(res, 201, { message: 'Thank you! We received your request.', ref: entry.ref });
+  }
+
   if (req.method === 'GET' && pathname === '/api/auth/verify') {
     const cookies = parseCookies(req);
     const session = auth.verifySession(cookies.session);

@@ -66,10 +66,11 @@ function readBody(req) {
 }
 function serve(req, res) {
   let pathname = new URL(req.url, 'http://localhost').pathname;
-  if (pathname === '/') pathname = '/index.html';
+  if (pathname === '/') pathname = '/landing.html';
+else if (pathname === '/app') pathname = '/index.html';
   const file = path.resolve(PUBLIC, '.' + pathname);
   if (!file.startsWith(PUBLIC) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); return res.end('Not found'); }
-  const types = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8', '.json':'application/json; charset=utf-8' };
+  const types = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8', '.json':'application/json; charset=utf-8', '.png':'image/png', '.jpg':'image/jpeg', '.svg':'image/svg+xml' };
   res.writeHead(200, { 'Content-Type': types[path.extname(file)] || 'application/octet-stream' }); fs.createReadStream(file).pipe(res);
 }
 async function handler(req, res) {
